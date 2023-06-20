@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.distributions import Categorical
 import os.path
+import random
 
 class Transformer(nn.Module):
     def __init__(self, state_dim, embedding_dim, num_heads, num_layers, output_dim):
@@ -45,7 +46,8 @@ class TradingEnvironment:
     def step(self, action):
         self.current_step += 1
         done = self.current_step >= len(self.data)  # Done flag updated here
-        next_state = None
+        # Assign a default value to next_state
+        next_state = np.zeros((self.lookback, self.data.shape[1]))
         reward = 0
 
         # If it's the end of the data, we shouldn't try to access it
@@ -67,9 +69,10 @@ class TradingEnvironment:
                     self.initial_price = None  # Reset the buying price
                     self.total_return += reward
                     self.potential_profit = 0  # Reset the potential profit after selling
+            
 
             # Prepare the next state considering the past 'lookback' steps
-            next_state = self.data.iloc[self.current_step - self.lookback:self.current_step]
+            next_state = self.data.iloc[self.current_step - self.lookback:self.current_step].values
 
         return next_state, reward, done
 
@@ -77,7 +80,7 @@ class TradingEnvironment:
         self.reward = 0
         self.done = False
         self.current_step = self.lookback - 1  # Start from the 'lookback'-th step
-        initial_state = self.data.iloc[:self.lookback]  # The initial state has 'lookback' steps
+        initial_state = self.data.iloc[:self.lookback].values  # The initial state has 'lookback' steps
         self.total_return = 0
         return initial_state
 
@@ -91,35 +94,38 @@ class DQNAgent:
         self.eps_end = eps_end
         self.eps_decay = eps_decay
 
-        self.model = Transformer(state_dim=state_dim, embedding_dim=state_dim, num_heads=1, num_layers=2, output_dim=action_dim)
+        self.model = Transformer(state_dim=state_dim, embedding_dim=state_dim, num_heads=1, num_layers=2, output_dim=action_dim).to(device)
         self.optimizer = Adam(self.model.parameters(), lr=self.lr)
         self.loss_fn = nn.MSELoss()
+        self.memory = ReplayBuffer(10000)
 
     def get_action(self, state):
         if np.random.rand() < self.epsilon:
             return np.random.randint(0, 2)  # Action is now between 0 and 1
         else:
-            state = torch.FloatTensor(state.values).reshape(1, -1, self.state_dim)  # Reshape state.values to match model input shape
+            state = torch.FloatTensor(state).reshape(1, -1, self.state_dim).to(device)  # Reshape state to match model input shape
             q_values = self.model(state)
             q_values_last_step = q_values[-1, 0, :]  # Get Q-values of the last step
             return torch.argmax(q_values_last_step).item()  # Take argmax to get the action with the highest Q-value
 
-    def update(self, state, action, reward, next_state, done):
-        state = torch.FloatTensor(state.values).unsqueeze(1)  # Shape: (lookback, batch_size, state_dim)
+    def update(self, batch_size):
+        if len(self.memory) < batch_size:
+            return
+        state, action, reward, next_state, done = self.memory.sample(batch_size)
 
-        reward = torch.FloatTensor([reward])
-        action = torch.LongTensor([action])
+        state = torch.FloatTensor(state).to(device)
+        next_state = torch.FloatTensor(next_state).to(device)
+        action = torch.LongTensor(action).to(device).squeeze()  # remove extra dimensions
+        reward = torch.FloatTensor(reward).to(device)
+        done = torch.FloatTensor(done).to(device)
 
         q_values = self.model(state)
-        q_value = q_values[0][action]  # Select the Q-value of the performed action
+        next_q_values = self.model(next_state)        
 
-        if next_state is not None:
-            next_state = torch.FloatTensor(next_state.values).unsqueeze(1)  # Shape: (lookback, batch_size, state_dim)
-            next_q_values = self.model(next_state)
-            next_q_value = next_q_values.max(1)[0]
-        else:
-            next_q_value = torch.zeros(1)
+        q_values_last_timestep = q_values[:, -1, :]  # shape: (batch_size, num_actions)
 
+        q_value = q_values_last_timestep.gather(1, action.unsqueeze(1)).squeeze(1)
+        next_q_value = next_q_values.view(batch_size, -1).max(1)[0]
         expected_q_value = reward + self.gamma * next_q_value * (1 - done)
 
         loss = self.loss_fn(q_value, expected_q_value.detach())
@@ -131,6 +137,27 @@ class DQNAgent:
         if self.epsilon > self.eps_end:
             self.epsilon *= self.eps_decay
 
+
+
+class ReplayBuffer:
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.buffer = []
+        self.position = 0
+
+    def push(self, state, action, reward, next_state, done):
+        if len(self.buffer) < self.capacity:
+            self.buffer.append(None)
+        self.buffer[self.position] = (state, np.array([action]), np.array([reward]), next_state, np.array([done]))
+        self.position = (self.position + 1) % self.capacity
+
+    def sample(self, batch_size):
+        batch = random.sample(self.buffer, batch_size)
+        states, actions, rewards, next_states, dones = zip(*batch)
+        return np.stack(states), np.stack(actions), np.stack(rewards), np.stack(next_states), np.stack(dones)
+
+    def __len__(self):
+        return len(self.buffer)
 
 
 # Loading OHLCV data from CSV
@@ -151,6 +178,9 @@ data['Volume'] = data['Volume'].astype(float)
 
 print(data)
 
+# Configur pytorch to run on GPU
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # Define the lookback period
 lookback = 30
 
@@ -164,6 +194,8 @@ eps_start = 1.0
 eps_end = 0.01
 eps_decay = 0.995
 
+batch_size = 16
+
 # Instantiate the agent
 agent = DQNAgent(state_dim, action_dim, lr, gamma, eps_start, eps_end, eps_decay)
 
@@ -175,7 +207,9 @@ for episode in range(num_episodes):
     while True:
         action = agent.get_action(state)
         next_state, reward, done = env.step(action)
-        agent.update(state, action, reward, next_state, done)
+        agent.memory.push(state, action, reward, next_state, done) # store the transition in memory
+        if env.current_step % 100 == 0: # update the model every 100 steps
+            agent.update(batch_size)
 
         if done:
             if os.path.isfile(output_path):
