@@ -1,0 +1,4 @@
+cd C:\Projects\deep_q_learning_transformer
+conda env create -f .\conda-environment.yml
+conda activate deep-q-trading
+python train.py

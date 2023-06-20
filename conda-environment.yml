@@ -1,0 +1,9 @@
+name: deep-q-trading
+channels:
+  - defaults
+  - pytorch
+dependencies:
+  - python=3.8
+  - numpy
+  - pytorch
+  - pandas
