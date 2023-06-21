@@ -1,1 +1,4 @@
-output.csv
+train_output.csv
+valid_output.csv
+test_output.csv
+get-bitcoin-data.py
