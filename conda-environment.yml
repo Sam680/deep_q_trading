@@ -1,9 +1,12 @@
 name: deep-q-trading
 channels:
-  - defaults
   - pytorch
+  - nvidia
+  - defaults
 dependencies:
-  - python=3.8
+  - python=3.9
   - numpy
+  - cudatoolkit
+  - cudnn
   - pytorch
   - pandas

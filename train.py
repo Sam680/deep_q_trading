@@ -137,7 +137,11 @@ class DQNAgent:
         if self.epsilon > self.eps_end:
             self.epsilon *= self.eps_decay
 
-
+    def exploit(self, state):
+        state = torch.FloatTensor(state).reshape(1, -1, self.state_dim).to(device)  # Reshape state to match model input shape
+        q_values = self.model(state)
+        q_values_last_step = q_values[-1, 0, :]  # Get Q-values of the last step
+        return torch.argmax(q_values_last_step).item()  # Take argmax to get the action with the highest Q-value
 
 class ReplayBuffer:
     def __init__(self, capacity):
@@ -161,13 +165,14 @@ class ReplayBuffer:
 
 
 # Loading OHLCV data from CSV
-data = pd.read_csv('BTCUSDT_data.csv')
-data = data.drop( columns=[ 'Date', 'index', 'Bid1_Price', 'Bid1_Quantity', 'Ask1_Price', 'Ask1_Quantity', 
-    'Bid2_Price', 'Bid2_Quantity', 'Ask2_Price', 'Ask2_Quantity',                       
-    'Bid3_Price', 'Bid3_Quantity', 'Ask3_Price' , 'Ask3_Quantity', 
-    'Bid4_Price', 'Bid4_Quantity', 'Ask4_Price', 'Ask4_Quantity', 
-    'Bid5_Price', 'Bid5_Quantity', 'Ask5_Price', 'Ask5_Quantity'
-])
+data = pd.read_csv('bitcoin_data.csv')
+data = data.drop(columns='Date')
+# data = data.drop( columns=[ 'Date', 'index', 'Bid1_Price', 'Bid1_Quantity', 'Ask1_Price', 'Ask1_Quantity', 
+#     'Bid2_Price', 'Bid2_Quantity', 'Ask2_Price', 'Ask2_Quantity',                       
+#     'Bid3_Price', 'Bid3_Quantity', 'Ask3_Price' , 'Ask3_Quantity', 
+#     'Bid4_Price', 'Bid4_Quantity', 'Ask4_Price', 'Ask4_Quantity', 
+#     'Bid5_Price', 'Bid5_Quantity', 'Ask5_Price', 'Ask5_Quantity'
+# ])
 data = data.dropna()
 
 data['Open'] = data['Open'].astype(float)
@@ -178,13 +183,22 @@ data['Volume'] = data['Volume'].astype(float)
 
 print(data)
 
+# Split data into training, validation and test sets
+train_data = data.iloc[:int(0.7*len(data))]
+valid_data = data.iloc[int(0.7*len(data)):int(0.85*len(data))]
+test_data = data.iloc[int(0.85*len(data)):]
+
 # Configur pytorch to run on GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(device)
 
 # Define the lookback period
 lookback = 30
 
-env = TradingEnvironment(data, lookback)
+# Define the environments
+train_env = TradingEnvironment(train_data, lookback)
+valid_env = TradingEnvironment(valid_data, lookback)
+test_env = TradingEnvironment(test_data, lookback)
 
 state_dim = 5  # Open, High, Low, Close, Volume
 action_dim = 2  # Buy, Hold
@@ -194,33 +208,92 @@ eps_start = 1.0
 eps_end = 0.01
 eps_decay = 0.995
 
-batch_size = 16
+batch_size = 217 # >218 will max out cpu
 
 # Instantiate the agent
 agent = DQNAgent(state_dim, action_dim, lr, gamma, eps_start, eps_end, eps_decay)
 
-output_path = 'output.csv'
+train_output_path = 'train_output.csv'
+valid_output_path = 'valid_output.csv'
+test_output_path = 'test_output.csv'
+
+# Create a variable to hold the best validation reward
+best_valid_reward = float('-inf')
+# Create a counter for episodes without improvement
+no_improve_counter = 0
+# Set a patience level - the number of episodes without improvement before stopping
+patience = 10
 
 num_episodes = 1000
 for episode in range(num_episodes):
-    state = env.reset()
+    # Training phase
+    state = train_env.reset()
     while True:
         action = agent.get_action(state)
-        next_state, reward, done = env.step(action)
-        agent.memory.push(state, action, reward, next_state, done) # store the transition in memory
-        if env.current_step % 100 == 0: # update the model every 100 steps
+        next_state, reward, done = train_env.step(action)
+        agent.memory.push(state, action, reward, next_state, done)
+        if train_env.current_step % 100 == 0:
             agent.update(batch_size)
 
         if done:
-            if os.path.isfile(output_path):
-                output = f"{episode}/{num_episodes}, {env.total_return:.3f}\n"
+            if os.path.isfile(train_output_path):
+                output = f"{episode}/{num_episodes}, {train_env.total_return:.3f}\n"
             else:
-                output = f"episode, total_return\n{episode}/{num_episodes}, {env.total_return:.3f}\n"
-            with open(output_path, 'a') as f:
+                output = f"episode, total_return\n{episode}/{num_episodes}, {train_env.total_return:.3f}\n"
+            with open(train_output_path, 'a') as f:
                 f.write(output)
             break
 
-        print(f"Step: {env.current_step}\tClose: {env.data.iloc[env.current_step]['Close']}\
-            \tInventory: {env.inventory}\tPot_Profit {env.potential_profit:.3f}\tReturn: {env.total_return:.3f}")
+        print(f"Step: {train_env.current_step}\tClose: {train_env.data.iloc[train_env.current_step]['Close']}\
+            \tInventory: {train_env.inventory}\tPot_Profit {train_env.potential_profit:.3f}\tReturn: {train_env.total_return:.3f}")
 
         state = next_state
+
+    # Validation phase
+    state = valid_env.reset()
+    total_valid_reward = 0
+    while True:
+        action = agent.exploit(state)
+        next_state, reward, done = valid_env.step(action)
+        total_valid_reward += reward
+        if done:
+            if os.path.isfile(valid_output_path):
+                output = f"{episode}/{num_episodes}, {valid_env.total_return:.3f}, {total_valid_reward:.3f}\n"
+            else:
+                output = f"episode, total_return, total_valid_reward\n{episode}/{num_episodes}, {valid_env.total_return:.3f}, {total_valid_reward:.3f}\n"
+            with open(valid_output_path, 'a') as f:
+                f.write(output)
+            break
+        state = next_state
+
+    # Check if the validation reward is an improvement
+    if total_valid_reward > best_valid_reward:
+        best_valid_reward = total_valid_reward
+        no_improve_counter = 0  # Reset the counter
+    else:
+        no_improve_counter += 1
+
+    print(f"Episode: {episode}/{num_episodes}, Validation Total Return: {total_valid_reward:.3f}")
+
+    # Check if patience has been exceeded
+    # if no_improve_counter > patience:
+    #     print("No improvement in validation reward for {0} episodes. Stopping training.".format(patience))
+    #     break
+
+# Testing phase
+state = test_env.reset()
+total_test_reward = 0
+while True:
+    action = agent.exploit(state)
+    next_state, reward, done = test_env.step(action)
+    total_test_reward += reward
+    state = next_state
+    if done:
+        if os.path.isfile(test_output_path):
+            output = f"{episode}/{num_episodes}, {test_env.total_return:.3f}, {total_test_reward:.3f}\n"
+        else:
+            output = f"episode, total_return, total_test_reward\n{episode}/{num_episodes}, {test_env.total_return:.3f}, {total_test_reward:.3f}\n"
+        with open(test_output_path, 'a') as f:
+            f.write(output)
+        break
+print(f"Test total return: {total_test_reward}")
