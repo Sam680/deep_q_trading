@@ -36,12 +36,14 @@ class TradingEnvironment:
         self.done = False
         self.current_step = lookback  # Start from the 'lookback'-th step
         self.inventory = 0
-        self.take_profit = 1.005
-        self.stop_loss = 0.997
+        self.take_profit = 0.005
+        self.stop_loss = 0.003
         self.initial_price = None
         self.lookback = lookback  # The number of past steps to consider
         self.total_return = 0  # Total return
         self.potential_profit = 0  # Potential profit
+        self.time_penalty = -0.0001  # Time penalty for each step
+        self.transaction_cost_rate = 0.001  # Transaction cost rate
 
     def step(self, action):
         self.current_step += 1
@@ -55,24 +57,34 @@ class TradingEnvironment:
             # Buy action and not holding any stock
             if action == 1 and self.inventory == 0:
                 self.inventory += 1
-                self.initial_price = self.data.iloc[self.current_step]['Close']
-                reward = -self.initial_price  # Negative reward as we are spending money to buy
+                self.buy_step = self.current_step  # Store the index at which the stock was bought
+                self.holding_period = 0  # Reset the holding period
+                reward = 0  # No immediate reward for buying
+
             # Check if holding stock
             elif self.inventory > 0:
+                self.holding_period += 1  # Increase the holding period
                 current_price = self.data.iloc[self.current_step]['Close']
-                self.potential_profit = ((current_price - self.initial_price) / self.initial_price) * 100
+                initial_price = self.data.iloc[self.buy_step]['Close']
+                percent_change = (current_price - initial_price) / initial_price
+
+                self.potential_profit = percent_change
+
+                # The reward is updated to reflect the unrealized profit or loss
+                reward = (self.potential_profit + (self.holding_period * self.time_penalty)) / 2
+
                 # Check if take profit or stop loss is reached
-                if current_price >= self.initial_price * self.take_profit or \
-                current_price <= self.initial_price * self.stop_loss:
+                if percent_change >= self.take_profit or percent_change <= -self.stop_loss:
                     self.inventory -= 1  # Sell the stock
-                    reward = current_price - self.initial_price
-                    self.initial_price = None  # Reset the buying price
+                    transaction_cost = self.transaction_cost_rate * percent_change
+                    reward = percent_change - transaction_cost  # Subtract transaction cost
+                    self.buy_step = None  # Reset the buying step
+                    self.holding_period = 0  # Reset the holding period when the position is closed
                     self.total_return += reward
                     self.potential_profit = 0  # Reset the potential profit after selling
-            
 
             # Prepare the next state considering the past 'lookback' steps
-            next_state = self.data.iloc[self.current_step - self.lookback:self.current_step].values
+            next_state = self.data.iloc[self.current_step - self.lookback:self.current_step].values        
 
         return next_state, reward, done
 
@@ -237,15 +249,15 @@ for episode in range(num_episodes):
 
         if done:
             if os.path.isfile(train_output_path):
-                output = f"{episode}/{num_episodes}, {train_env.total_return:.3f}\n"
+                output = f"{episode}/{num_episodes},{train_env.total_return:.3f}\n"
             else:
-                output = f"episode, total_return\n{episode}/{num_episodes}, {train_env.total_return:.3f}\n"
+                output = f"episode,total_return\n{episode}/{num_episodes},{train_env.total_return:.3f}\n"
             with open(train_output_path, 'a') as f:
                 f.write(output)
             break
 
-        print(f"Step: {train_env.current_step}\tClose: {train_env.data.iloc[train_env.current_step]['Close']}\
-            \tInventory: {train_env.inventory}\tPot_Profit {train_env.potential_profit:.3f}\tReturn: {train_env.total_return:.3f}")
+        print(f"Step: {train_env.current_step}\tClose: {train_env.data.iloc[train_env.current_step]['Close']}\taction: {action}\
+            \tInventory: {train_env.inventory}\tPot_Profit {train_env.potential_profit:.3f}\tReward: {reward:.3f}\tReturn: {train_env.total_return:.3f}")
 
         state = next_state
 
@@ -258,9 +270,9 @@ for episode in range(num_episodes):
         total_valid_reward += reward
         if done:
             if os.path.isfile(valid_output_path):
-                output = f"{episode}/{num_episodes}, {valid_env.total_return:.3f}, {total_valid_reward:.3f}\n"
+                output = f"{episode}/{num_episodes},{valid_env.total_return:.3f},{total_valid_reward:.3f}\n"
             else:
-                output = f"episode, total_return, total_valid_reward\n{episode}/{num_episodes}, {valid_env.total_return:.3f}, {total_valid_reward:.3f}\n"
+                output = f"episode, total_return,total_valid_reward\n{episode}/{num_episodes},{valid_env.total_return:.3f},{total_valid_reward:.3f}\n"
             with open(valid_output_path, 'a') as f:
                 f.write(output)
             break
@@ -290,9 +302,9 @@ while True:
     state = next_state
     if done:
         if os.path.isfile(test_output_path):
-            output = f"{episode}/{num_episodes}, {test_env.total_return:.3f}, {total_test_reward:.3f}\n"
+            output = f"{episode}/{num_episodes},{test_env.total_return:.3f},{total_test_reward:.3f}\n"
         else:
-            output = f"episode, total_return, total_test_reward\n{episode}/{num_episodes}, {test_env.total_return:.3f}, {total_test_reward:.3f}\n"
+            output = f"episode, total_return,total_test_reward\n{episode}/{num_episodes},{test_env.total_return:.3f},{total_test_reward:.3f}\n"
         with open(test_output_path, 'a') as f:
             f.write(output)
         break
