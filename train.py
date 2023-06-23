@@ -42,8 +42,9 @@ class TradingEnvironment:
         self.lookback = lookback  # The number of past steps to consider
         self.total_return = 0  # Total return
         self.potential_profit = 0  # Potential profit
-        self.time_penalty = -0.0001  # Time penalty for each step
+        self.time_penalty = -0.0000  # Time penalty for each step
         self.transaction_cost_rate = 0.001  # Transaction cost rate
+        #self.intermediate_reward_steps = 10 # Steps until intermediate reward
 
     def step(self, action):
         self.current_step += 1
@@ -54,14 +55,18 @@ class TradingEnvironment:
 
         # If it's the end of the data, we shouldn't try to access it
         if not done:
+            # Buy action and already holding some stock
+            if action == 1 and self.inventory > 0:
+                reward = -1
+
             # Buy action and not holding any stock
-            if action == 1 and self.inventory == 0:
+            elif action == 1 and self.inventory == 0:
                 self.inventory += 1
                 self.buy_step = self.current_step  # Store the index at which the stock was bought
                 self.holding_period = 0  # Reset the holding period
                 reward = 0  # No immediate reward for buying
 
-            # Check if holding stock
+            # Check if holding stock            
             elif self.inventory > 0:
                 self.holding_period += 1  # Increase the holding period
                 current_price = self.data.iloc[self.current_step]['Close']
@@ -82,9 +87,14 @@ class TradingEnvironment:
                     self.holding_period = 0  # Reset the holding period when the position is closed
                     self.total_return += reward
                     self.potential_profit = 0  # Reset the potential profit after selling
+    
+                # If holding period is a predefined number of steps, provide an intermediate reward
+                # elif self.holding_period == self.intermediate_reward_steps:
+                #     intermediate_reward = percent_change
+                #     reward += intermediate_reward
 
             # Prepare the next state considering the past 'lookback' steps
-            next_state = self.data.iloc[self.current_step - self.lookback:self.current_step].values        
+            next_state = self.data.iloc[self.current_step - self.lookback:self.current_step].values
 
         return next_state, reward, done
 
@@ -177,7 +187,7 @@ class ReplayBuffer:
 
 
 # Loading OHLCV data from CSV
-data = pd.read_csv('bitcoin_data.csv')
+data = pd.read_csv('bitcoin-data.csv')
 data = data.drop(columns='Date')
 # data = data.drop( columns=[ 'Date', 'index', 'Bid1_Price', 'Bid1_Quantity', 'Ask1_Price', 'Ask1_Quantity', 
 #     'Bid2_Price', 'Bid2_Quantity', 'Ask2_Price', 'Ask2_Quantity',                       
@@ -236,7 +246,7 @@ no_improve_counter = 0
 # Set a patience level - the number of episodes without improvement before stopping
 patience = 10
 
-num_episodes = 1000
+num_episodes = 25000
 for episode in range(num_episodes):
     # Training phase
     state = train_env.reset()
@@ -256,7 +266,7 @@ for episode in range(num_episodes):
                 f.write(output)
             break
 
-        print(f"Step: {train_env.current_step}\tClose: {train_env.data.iloc[train_env.current_step]['Close']}\taction: {action}\
+        print(f"e: {episode}\ti: {train_env.current_step}\t\tClose: {train_env.data.iloc[train_env.current_step]['Close']}\taction: {action}\
             \tInventory: {train_env.inventory}\tPot_Profit {train_env.potential_profit:.3f}\tReward: {reward:.3f}\tReturn: {train_env.total_return:.3f}")
 
         state = next_state
