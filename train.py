@@ -50,7 +50,7 @@ class TradingEnvironment:
         self.current_step += 1
         done = self.current_step >= len(self.data)  # Done flag updated here
         # Assign a default value to next_state
-        next_state = np.zeros((self.lookback, self.data.shape[1]))
+        next_state = np.zeros((self.lookback, self.data.shape[1] + 1))  # +1 for the inventory status
         reward = 0
 
         # If it's the end of the data, we shouldn't try to access it
@@ -95,6 +95,8 @@ class TradingEnvironment:
 
             # Prepare the next state considering the past 'lookback' steps
             next_state = self.data.iloc[self.current_step - self.lookback:self.current_step].values
+            # Append inventory to the state
+            next_state = np.append(next_state, [[self.inventory]*self.data.shape[1]], axis=0)
 
         return next_state, reward, done
 
@@ -102,8 +104,10 @@ class TradingEnvironment:
         self.reward = 0
         self.done = False
         self.current_step = self.lookback - 1  # Start from the 'lookback'-th step
-        initial_state = self.data.iloc[:self.lookback].values  # The initial state has 'lookback' steps
         self.total_return = 0
+        initial_state = self.data.iloc[:self.lookback].values  # The initial state has 'lookback' steps
+        # Append inventory to the state
+        initial_state = np.append(initial_state, [[self.inventory]*self.data.shape[1]], axis=0)
         return initial_state
 
 class DQNAgent:
@@ -270,6 +274,11 @@ for episode in range(num_episodes):
             \tInventory: {train_env.inventory}\tPot_Profit {train_env.potential_profit:.3f}\tReward: {reward:.3f}\tReturn: {train_env.total_return:.3f}")
 
         state = next_state
+
+    # Check if it's time to save the model
+    if episode % 200 == 0 and episode > 0:
+        # Save the model
+        torch.save(agent.model.state_dict(), f'model-{episode}.pth')
 
     # Validation phase
     state = valid_env.reset()
