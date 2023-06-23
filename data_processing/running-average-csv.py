@@ -12,6 +12,9 @@ for index, row in data.iterrows():
     cumulative_sum += row['total_return']
     data.at[index, 'average'] = cumulative_sum / (index + 1)
 
+# Calculate the 50 rolling average
+data['rolling_50_avg'] = data['total_return'].rolling(window=50).mean()
+
 # Print the updated data
 print(data)
 
