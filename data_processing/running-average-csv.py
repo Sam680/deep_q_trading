@@ -1,7 +1,7 @@
 import pandas as pd
 
 # Read the CSV file
-data = pd.read_csv('train_output.csv')
+data = pd.read_csv('../train_output.csv')
 
 # Initialize the average column with NaN values
 data['average'] = float('NaN')

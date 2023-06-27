@@ -1,36 +1,34 @@
-import requests
-import csv
-import time
-from datetime import datetime, timedelta
+from binance.client import Client
+import pandas as pd
+import datetime
 
-# Define the API URL
-url = "https://min-api.cryptocompare.com/data/v2/histominute"
+api_key = 'vlNCynmULdR2rgKD3rkSwKPGurX80tLirjhrCkQRIjrqacFYefsMSV7TeRkLLBzO'
+api_secret = 'Kk7NjgfFVCGbwYy0vpwMFE4eXmUAGEdhdnKwpl3uBB704r4fqy548hP1SOYn9boc'
 
-# Define the parameters
-params = {
-    "fsym": "BTC",
-    "tsym": "USD",
-    "limit": 2000  # Max limit per request
-}
+client = Client(api_key, api_secret)
 
-# Prepare the CSV file
-with open('bitcoin-data.csv', 'w', newline='') as file:
-    writer = csv.writer(file)
-    writer.writerow(["Date", "Open", "High", "Low", "Close", "Volume"])
+# Get 5 minute klines from 01/01/2021 to 01/01/2023
+start_date = '1 Jan 2021'
+end_date = '1 Jan 2023'
 
-    # Loop over each day in the past week
-    for i in range(7):
-        # Calculate the end timestamp for this day
-        end_time = datetime.now() - timedelta(days=i)
-        params["toTs"] = int(end_time.timestamp())
+klines = client.get_historical_klines("BTCUSDT", Client.KLINE_INTERVAL_5MINUTE, start_date, end_date)
 
-        # Send the request
-        response = requests.get(url, params=params)
+# Create a dataframe
+df = pd.DataFrame(klines, columns = ['open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_asset_volume', 'number_of_trades', 'taker_buy_base', 'taker_buy_quote', 'ignored'])
 
-        # Parse the response
-        data = response.json()['Data']['Data']
+# Convert timestamp to date
+df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
 
-        # Write each data point
-        for point in data:
-            date = datetime.fromtimestamp(point['time']).strftime('%Y-%m-%d %H:%M:%S')
-            writer.writerow([date, point['open'], point['high'], point['low'], point['close'], point['volumeto']])
+# Select only the required columns
+df = df[['open_time', 'open', 'high', 'low', 'close', 'volume']]
+
+# Rename 'open_time' to 'Date'
+df.rename(columns={'open_time': 'Date', 
+                   'open': 'Open', 
+                   'high': 'High',
+                   'low': 'Low',
+                   'close': 'Close',
+                   'volume': 'Volume'}, inplace=True)
+
+# Save to csv
+df.to_csv('BTC_5min_data.csv', index=False)
