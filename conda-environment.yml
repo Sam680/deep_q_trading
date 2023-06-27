@@ -10,3 +10,4 @@ dependencies:
   - cudnn
   - pytorch
   - pandas
+  - scikit-learn

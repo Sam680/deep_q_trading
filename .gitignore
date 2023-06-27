@@ -2,3 +2,4 @@ train_output.csv
 valid_output.csv
 test_output.csv
 train_output_average.csv
+*.pth

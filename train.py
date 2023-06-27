@@ -55,7 +55,7 @@ class TradingEnvironment:
 
         # If it's the end of the data, we shouldn't try to access it
         if not done:
-            # Buy action and already holding some stock
+            # If buying while already holding some stock
             if action == 1 and self.inventory > 0:
                 reward = -1
 
@@ -93,11 +93,10 @@ class TradingEnvironment:
                 #     intermediate_reward = percent_change
                 #     reward += intermediate_reward
 
+
             # Prepare the next state considering the past 'lookback' steps
             next_state[:, :-1] = self.data.iloc[self.current_step - self.lookback:self.current_step].values
-            next_state[:, -1] = self.inventory  # Append inventory to next_state
-
-        return next_state, reward, done
+            next_state[:, -1] = self.inventory  # Append inventory to next_state     
 
         return next_state, reward, done
 
@@ -226,7 +225,7 @@ lookback = 30
 # Define the environments
 train_env = TradingEnvironment(train_data, lookback)
 valid_env = TradingEnvironment(valid_data, lookback)
-test_env = TradingEnvironment(test_data, lookback)
+# test_env = TradingEnvironment(test_data, lookback)
 
 state_dim = 6  # Open, High, Low, Close, Volume, Inventory
 action_dim = 2  # Buy, Hold
@@ -314,19 +313,19 @@ for episode in range(num_episodes):
     #     break
 
 # Testing phase
-state = test_env.reset()
-total_test_reward = 0
-while True:
-    action = agent.exploit(state)
-    next_state, reward, done = test_env.step(action)
-    total_test_reward += reward
-    state = next_state
-    if done:
-        if os.path.isfile(test_output_path):
-            output = f"{episode}/{num_episodes},{test_env.total_return:.3f},{total_test_reward:.3f}\n"
-        else:
-            output = f"episode, total_return,total_test_reward\n{episode}/{num_episodes},{test_env.total_return:.3f},{total_test_reward:.3f}\n"
-        with open(test_output_path, 'a') as f:
-            f.write(output)
-        break
-print(f"Test total return: {total_test_reward}")
+# state = test_env.reset()
+# total_test_reward = 0
+# while True:
+#     action = agent.exploit(state)
+#     next_state, reward, done = test_env.step(action)
+#     total_test_reward += reward
+#     state = next_state
+#     if done:
+#         if os.path.isfile(test_output_path):
+#             output = f"{episode}/{num_episodes},{test_env.total_return:.3f},{total_test_reward:.3f}\n"
+#         else:
+#             output = f"episode, total_return,total_test_reward\n{episode}/{num_episodes},{test_env.total_return:.3f},{total_test_reward:.3f}\n"
+#         with open(test_output_path, 'a') as f:
+#             f.write(output)
+#         break
+# print(f"Test total return: {total_test_reward}")
