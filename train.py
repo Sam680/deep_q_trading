@@ -125,14 +125,21 @@ class DQNAgent:
         self.loss_fn = nn.MSELoss()
         self.memory = ReplayBuffer(10000)
 
-    def get_action(self, state):
+    def get_action(self, state, valid_actions=None):
+        if valid_actions is None:
+            valid_actions = [0, 1]  # Default to all actions being valid
+
         if np.random.rand() < self.epsilon:
-            return np.random.randint(0, 2)  # Action is now between 0 and 1
+            return np.random.choice(valid_actions)  # Randomly select from the valid actions
         else:
             state = torch.FloatTensor(state).reshape(1, -1, self.state_dim).to(device)  # Reshape state to match model input shape
             q_values = self.model(state)
             q_values_last_step = q_values[-1, 0, :]  # Get Q-values of the last step
-            return torch.argmax(q_values_last_step).item()  # Take argmax to get the action with the highest Q-value
+
+            # Only consider Q-values of valid actions
+            valid_q_values = q_values_last_step[valid_actions]
+            valid_action_indexes = torch.argmax(valid_q_values).item()  # Get index of action with highest Q-value among valid actions
+            return valid_actions[valid_action_indexes]
 
     def update(self, batch_size):
         if len(self.memory) < batch_size:
@@ -265,7 +272,8 @@ for episode in range(num_episodes):
     # Training phase
     state = train_env.reset()
     while True:
-        action = agent.get_action(state)
+        valid_actions = [0, 1] if train_env.inventory == 0 else [0]  # Only allow holding or selling if inventory is greater than 0
+        action = agent.get_action(state, valid_actions=valid_actions)
         next_state, reward, done = train_env.step(action)
         agent.memory.push(state, action, reward, next_state, done)
         if train_env.current_step % 100 == 0:
