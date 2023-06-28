@@ -53,7 +53,7 @@ class TradingEnvironment:
         self.current_step += 1
         done = self.current_step >= len(self.data)  # Done flag updated here
         # Assign a default value to next_state
-        next_state = np.zeros((self.lookback, self.data.shape[1]))
+        next_state = np.zeros((self.lookback, self.data.shape[1] + 1)) # +1 for the inventory
         reward = 0
 
         # If it's the end of the data, we shouldn't try to access it
@@ -98,7 +98,8 @@ class TradingEnvironment:
                 #     reward += intermediate_reward
 
 
-            next_state = self.data.iloc[self.current_step - self.lookback:self.current_step].values
+            next_state[:, :-1] = self.data.iloc[self.current_step - self.lookback:self.current_step].values
+            next_state[:, -1] = self.inventory  # Append inventory to next_state 
 
         return next_state, reward, done
     
@@ -112,7 +113,7 @@ class TradingEnvironment:
         self.total_return = 0
         self.num_wins = 0
         self.num_losses = 0
-        initial_state = self.data.iloc[:self.lookback].values  # The initial state has 'lookback' steps
+        initial_state = np.zeros((self.lookback, self.data.shape[1] + 1)) # +1 for inventory
         return initial_state
 
 class DQNAgent:
@@ -154,8 +155,8 @@ class DQNAgent:
         state = torch.FloatTensor(state).to(device)
         next_state = torch.FloatTensor(next_state).to(device)
         action = torch.LongTensor(action).to(device).squeeze()  # remove extra dimensions
-        reward = torch.FloatTensor(reward).to(device).squeeze(1)
-        done = torch.FloatTensor(done).to(device).squeeze(1)
+        reward = torch.FloatTensor(reward).to(device)
+        done = torch.FloatTensor(done).to(device)
 
         q_values = self.model(state)
         next_q_values = self.model(next_state)        
@@ -248,7 +249,7 @@ train_env = TradingEnvironment(train_data, lookback, close)
 valid_env = TradingEnvironment(valid_data, lookback, close)
 # test_env = TradingEnvironment(test_data, lookback, close)
 
-state_dim = 5  # Open, High, Low, Close, Volume
+state_dim = 6  # Open, High, Low, Close, Volume, Inventory
 action_dim = 2  # Buy, Hold
 lr = 0.001
 gamma = 0.99
