@@ -45,6 +45,8 @@ class TradingEnvironment:
         self.potential_profit = 0  # Potential profit
         self.time_penalty = -0.0000  # Time penalty for each step
         self.transaction_cost_rate = 0.001  # Transaction cost rate
+        self.num_wins = 0
+        self.num_losses = 0
         #self.intermediate_reward_steps = 10 # Steps until intermediate reward
 
     def step(self, action):
@@ -56,12 +58,8 @@ class TradingEnvironment:
 
         # If it's the end of the data, we shouldn't try to access it
         if not done:
-            # If buying while already holding some stock
-            if action == 1 and self.inventory > 0:
-                reward = -1
-
             # Buy action and not holding any stock
-            elif action == 1 and self.inventory == 0:
+            if action == 1 and self.inventory == 0:
                 self.inventory += 1
                 self.buy_step = self.current_step  # Store the index at which the stock was bought
                 self.holding_period = 0  # Reset the holding period
@@ -85,8 +83,10 @@ class TradingEnvironment:
                     transaction_cost = self.transaction_cost_rate * percent_change
                     if percent_change >= self.take_profit:
                         reward = self.take_profit - transaction_cost
+                        self.num_wins += 1
                     else:
                         reward = -self.stop_loss - transaction_cost
+                        self.num_losses += 1
                     self.buy_step = None  # Reset the buying step
                     self.holding_period = 0  # Reset the holding period when the position is closed
                     self.total_return += reward
@@ -101,12 +101,17 @@ class TradingEnvironment:
             next_state = self.data.iloc[self.current_step - self.lookback:self.current_step].values
 
         return next_state, reward, done
+    
+    def win_loss_ratio(self):
+        return self.num_wins / (self.num_losses + 1e-9)  # To avoid division by zero
 
     def reset(self):
         self.reward = 0
         self.done = False
         self.current_step = self.lookback - 1  # Start from the 'lookback'-th step
         self.total_return = 0
+        self.num_wins = 0
+        self.num_losses = 0
         initial_state = self.data.iloc[:self.lookback].values  # The initial state has 'lookback' steps
         return initial_state
 
@@ -281,9 +286,9 @@ for episode in range(num_episodes):
 
         if done:
             if os.path.isfile(train_output_path):
-                output = f"{episode}/{num_episodes},{train_env.total_return:.3f}\n"
+                output = f"{episode}/{num_episodes},{train_env.total_return:.3f},{train_env.win_loss_ratio()}\n"
             else:
-                output = f"episode,total_return\n{episode}/{num_episodes},{train_env.total_return:.3f}\n"
+                output = f"episode,total_return,win_loss\n{episode}/{num_episodes},{train_env.total_return:.3f},{train_env.win_loss_ratio()}\n"
             with open(train_output_path, 'a') as f:
                 f.write(output)
             break
