@@ -29,7 +29,6 @@ class Transformer(nn.Module):
         x = self.fc(x)
         return x
 
-
 class TradingEnvironment:
     def __init__(self, data, lookback, close):
         self.data = data
@@ -46,6 +45,8 @@ class TradingEnvironment:
         self.potential_profit = 0  # Potential profit
         self.time_penalty = -0.0000  # Time penalty for each step
         self.transaction_cost_rate = 0.001  # Transaction cost rate
+        self.num_wins = 0
+        self.num_losses = 0
         #self.intermediate_reward_steps = 10 # Steps until intermediate reward
 
     def step(self, action):
@@ -57,12 +58,8 @@ class TradingEnvironment:
 
         # If it's the end of the data, we shouldn't try to access it
         if not done:
-            # If buying while already holding some stock
-            if action == 1 and self.inventory > 0:
-                reward = -1
-
             # Buy action and not holding any stock
-            elif action == 1 and self.inventory == 0:
+            if action == 1 and self.inventory == 0:
                 self.inventory += 1
                 self.buy_step = self.current_step  # Store the index at which the stock was bought
                 self.holding_period = 0  # Reset the holding period
@@ -86,8 +83,10 @@ class TradingEnvironment:
                     transaction_cost = self.transaction_cost_rate * percent_change
                     if percent_change >= self.take_profit:
                         reward = self.take_profit - transaction_cost
+                        self.num_wins += 1
                     else:
                         reward = -self.stop_loss - transaction_cost
+                        self.num_losses += 1
                     self.buy_step = None  # Reset the buying step
                     self.holding_period = 0  # Reset the holding period when the position is closed
                     self.total_return += reward
@@ -100,19 +99,21 @@ class TradingEnvironment:
 
 
             next_state[:, :-1] = self.data.iloc[self.current_step - self.lookback:self.current_step].values
-            next_state[:, -1] = self.inventory  # Append inventory to next_state     
+            next_state[:, -1] = self.inventory  # Append inventory to next_state 
 
         return next_state, reward, done
+    
+    def win_loss_ratio(self):
+        return self.num_wins / (self.num_losses + 1e-9)  # To avoid division by zero
 
     def reset(self):
         self.reward = 0
         self.done = False
         self.current_step = self.lookback - 1  # Start from the 'lookback'-th step
         self.total_return = 0
+        self.num_wins = 0
+        self.num_losses = 0
         initial_state = np.zeros((self.lookback, self.data.shape[1] + 1)) # +1 for inventory
-        # Initial state has 'lookback' steps plus inventory
-        initial_state[:, :-1] = self.data.iloc[:self.lookback].values
-        initial_state[:, -1] = self.inventory
         return initial_state
 
 class DQNAgent:
@@ -130,14 +131,21 @@ class DQNAgent:
         self.loss_fn = nn.MSELoss()
         self.memory = ReplayBuffer(10000)
 
-    def get_action(self, state):
+    def get_action(self, state, valid_actions=None):
+        if valid_actions is None:
+            valid_actions = [0, 1]  # Default to all actions being valid
+
         if np.random.rand() < self.epsilon:
-            return np.random.randint(0, 2)  # Action is now between 0 and 1
+            return np.random.choice(valid_actions)  # Randomly select from the valid actions
         else:
             state = torch.FloatTensor(state).reshape(1, -1, self.state_dim).to(device)  # Reshape state to match model input shape
             q_values = self.model(state)
             q_values_last_step = q_values[-1, 0, :]  # Get Q-values of the last step
-            return torch.argmax(q_values_last_step).item()  # Take argmax to get the action with the highest Q-value
+
+            # Only consider Q-values of valid actions
+            valid_q_values = q_values_last_step[valid_actions]
+            valid_action_indexes = torch.argmax(valid_q_values).item()  # Get index of action with highest Q-value among valid actions
+            return valid_actions[valid_action_indexes]
 
     def update(self, batch_size):
         if len(self.memory) < batch_size:
@@ -270,7 +278,8 @@ for episode in range(num_episodes):
     # Training phase
     state = train_env.reset()
     while True:
-        action = agent.get_action(state)
+        valid_actions = [0, 1] if train_env.inventory == 0 else [0]  # Only allow holding or selling if inventory is greater than 0
+        action = agent.get_action(state, valid_actions=valid_actions)
         next_state, reward, done = train_env.step(action)
         agent.memory.push(state, action, reward, next_state, done)
         if train_env.current_step % 100 == 0:
@@ -278,9 +287,9 @@ for episode in range(num_episodes):
 
         if done:
             if os.path.isfile(train_output_path):
-                output = f"{episode}/{num_episodes},{train_env.total_return:.3f}\n"
+                output = f"{episode}/{num_episodes},{train_env.total_return:.3f},{train_env.win_loss_ratio()}\n"
             else:
-                output = f"episode,total_return\n{episode}/{num_episodes},{train_env.total_return:.3f}\n"
+                output = f"episode,total_return,win_loss\n{episode}/{num_episodes},{train_env.total_return:.3f},{train_env.win_loss_ratio()}\n"
             with open(train_output_path, 'a') as f:
                 f.write(output)
             break
