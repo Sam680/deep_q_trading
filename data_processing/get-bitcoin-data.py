@@ -8,8 +8,8 @@ api_secret = 'Kk7NjgfFVCGbwYy0vpwMFE4eXmUAGEdhdnKwpl3uBB704r4fqy548hP1SOYn9boc'
 client = Client(api_key, api_secret)
 
 # Get 5 minute klines from 01/01/2021 to 01/01/2023
-start_date = '1 Jan 2021'
-end_date = '1 Jan 2023'
+start_date = '1 May 2023'
+end_date = '1 Jun 2023'
 
 klines = client.get_historical_klines("BTCUSDT", Client.KLINE_INTERVAL_5MINUTE, start_date, end_date)
 
@@ -31,4 +31,4 @@ df.rename(columns={'open_time': 'Date',
                    'volume': 'Volume'}, inplace=True)
 
 # Save to csv
-df.to_csv('BTC_5min_data.csv', index=False)
+df.to_csv('BTC_5min_1mon_data.csv', index=False)

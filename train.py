@@ -47,7 +47,6 @@ class TradingEnvironment:
         self.transaction_cost_rate = 0.001  # Transaction cost rate
         self.num_wins = 0
         self.num_losses = 0
-        #self.intermediate_reward_steps = 10 # Steps until intermediate reward
 
     def step(self, action):
         self.current_step += 1
@@ -75,28 +74,31 @@ class TradingEnvironment:
                 self.potential_profit = percent_change
 
                 # The reward is updated to reflect the unrealized profit or loss
-                reward = (self.potential_profit + (self.holding_period * self.time_penalty)) / 2
+                #reward = (self.potential_profit + (self.holding_period * self.time_penalty)) / 2
+
+                # Apply penalty proportional to the holding period and inverse of win/loss ratio
+                #reward -= self.holding_period * (1 / self.win_loss_ratio())
 
                 # Check if take profit or stop loss is reached
                 if percent_change >= self.take_profit or percent_change <= -self.stop_loss:
-                    self.inventory -= 1  # Sell the stock
-                    transaction_cost = self.transaction_cost_rate * percent_change
+                    self.inventory -= 1
+
+                    # Check if profitable
                     if percent_change >= self.take_profit:
-                        reward = self.take_profit - transaction_cost
                         self.num_wins += 1
+                        #reward = (self.take_profit - self.transaction_cost_rate) * self.win_loss_ratio()
+                        reward = self.take_profit - self.transaction_cost_rate
+                        self.total_return += self.take_profit - self.transaction_cost_rate
                     else:
-                        reward = -self.stop_loss - transaction_cost
                         self.num_losses += 1
+                        #reward = (-self.stop_loss - self.transaction_cost_rate) * (1 / self.win_loss_ratio())
+                        reward = -self.stop_loss - self.transaction_cost_rate
+                        self.total_return += -self.stop_loss - self.transaction_cost_rate
+
+                    # Reset variables
                     self.buy_step = None  # Reset the buying step
                     self.holding_period = 0  # Reset the holding period when the position is closed
-                    self.total_return += reward
                     self.potential_profit = 0  # Reset the potential profit after selling
-    
-                # If holding period is a predefined number of steps, provide an intermediate reward
-                # elif self.holding_period == self.intermediate_reward_steps:
-                #     intermediate_reward = percent_change
-                #     reward += intermediate_reward
-
 
             next_state[:, :-1] = self.data.iloc[self.current_step - self.lookback:self.current_step].values
             next_state[:, -1] = self.inventory  # Append inventory to next_state 
@@ -104,13 +106,17 @@ class TradingEnvironment:
         return next_state, reward, done
     
     def win_loss_ratio(self):
-        return self.num_wins / (self.num_losses + 1e-9)  # To avoid division by zero
+        if self.num_wins != 0 and self.num_losses != 0:
+            return self.num_wins / (self.num_losses + 1e-9)  # To avoid division by zero
+        else:
+            return 1
 
     def reset(self):
         self.reward = 0
         self.done = False
         self.current_step = self.lookback - 1  # Start from the 'lookback'-th step
         self.total_return = 0
+        self.holding_period = 0
         self.num_wins = 0
         self.num_losses = 0
         initial_state = np.zeros((self.lookback, self.data.shape[1] + 1)) # +1 for inventory
@@ -155,8 +161,8 @@ class DQNAgent:
         state = torch.FloatTensor(state).to(device)
         next_state = torch.FloatTensor(next_state).to(device)
         action = torch.LongTensor(action).to(device).squeeze()  # remove extra dimensions
-        reward = torch.FloatTensor(reward).to(device)
-        done = torch.FloatTensor(done).to(device)
+        reward = torch.FloatTensor(reward).to(device).squeeze()  # remove extra dimensions
+        done = torch.FloatTensor(done).to(device).squeeze()  # remove extra dimensions
 
         q_values = self.model(state)
         next_q_values = self.model(next_state)        
@@ -202,9 +208,30 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.buffer)
 
+def calculate_macd(data, short_window, long_window):
+    short_ema = data['Close'].ewm(span=short_window, adjust=False).mean()
+    long_ema = data['Close'].ewm(span=long_window, adjust=False).mean()
+    data['MACD'] = short_ema - long_ema
+    data['Signal'] = data['MACD'].ewm(span=4, adjust=False).mean()
+    data['MACD'] = data['MACD'].astype(float)
+    data['Signal'] = data['Signal'].astype(float)
+    return data
+
+
+def calculate_rsi(data, period):
+    delta = data.diff()
+    up, down = delta.copy(), delta.copy()
+    up[up < 0] = 0
+    down[down > 0] = 0
+    average_gain = up.rolling(window=period).mean()
+    average_loss = abs(down.rolling(window=period).mean())
+    rs = average_gain / average_loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
 
 # Loading OHLCV data from CSV
-data = pd.read_csv('data_processing/BTC_5min_data.csv')
+data = pd.read_csv('data_processing/BTC_5min_1mon_data.csv')
 data = data.drop(columns='Date')
 # data = data.drop( columns=[ 'Date', 'index', 'Bid1_Price', 'Bid1_Quantity', 'Ask1_Price', 'Ask1_Quantity', 
 #     'Bid2_Price', 'Bid2_Quantity', 'Ask2_Price', 'Ask2_Quantity',                       
@@ -229,6 +256,7 @@ print(close)
 
 # Scale the Open, High, Low, Close, and Volume columns
 scaler = MinMaxScaler()
+#columns_to_scale = ['Open', 'High', 'Low', 'Close', 'Volume']
 columns_to_scale = ['Open', 'High', 'Low', 'Close', 'Volume']
 data[columns_to_scale] = scaler.fit_transform(data[columns_to_scale])
 
@@ -273,7 +301,7 @@ no_improve_counter = 0
 # Set a patience level - the number of episodes without improvement before stopping
 patience = 10
 
-num_episodes = 25000
+num_episodes = 5000
 for episode in range(num_episodes):
     # Training phase
     state = train_env.reset()
@@ -300,7 +328,7 @@ for episode in range(num_episodes):
         state = next_state
 
     # Check if it's time to save the model
-    if episode % 200 == 0 and episode > 0:
+    if episode % 50 == 0 and episode > 99:
         # Save the model
         torch.save(agent.model.state_dict(), f'model-{episode}.pth')
 
